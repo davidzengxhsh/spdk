@@ -42,8 +42,13 @@
 extern "C" {
 #endif
 
+#ifdef __powerpc__
+#define spdk_wmb()      __asm volatile("sync" ::: "memory")
+#define spdk_mb()       __asm volatile("sync" ::: "memory")
+#else
 #define spdk_wmb()	__asm volatile("sfence" ::: "memory")
 #define spdk_mb()	__asm volatile("mfence" ::: "memory")
+#endif
 
 #ifdef __cplusplus
 }

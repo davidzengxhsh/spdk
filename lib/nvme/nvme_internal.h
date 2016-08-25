@@ -45,7 +45,12 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifdef __powerpc__
+#define PAGE_SIZE (sysconf(_SC_PAGESIZE))
+#else
 #include <x86intrin.h>
+#endif
 
 #include <sys/user.h>
 
