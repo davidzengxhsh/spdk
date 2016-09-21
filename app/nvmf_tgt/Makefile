@@ -59,13 +59,18 @@ SPDK_LIBS = \
 	$(SPDK_ROOT_DIR)/lib/rpc/libspdk_rpc.a \
 	$(SPDK_ROOT_DIR)/lib/jsonrpc/libspdk_jsonrpc.a \
 	$(SPDK_ROOT_DIR)/lib/json/libspdk_json.a \
+	$(SPDK_ROOT_DIR)/lib/event/rpc/libspdk_app_rpc.a \
+	$(SPDK_ROOT_DIR)/lib/log/rpc/libspdk_log_rpc.a \
 
 LIBS += $(BLOCKDEV_MODULES_LINKER_ARGS) \
         $(COPY_MODULES_LINKER_ARGS)
 
 LIBS += $(SPDK_LIBS) $(PCIACCESS_LIB)
 
+ifeq ($(CONFIG_RDMA),y)
 LIBS += -libverbs -lrdmacm
+endif
+
 LIBS += $(DPDK_LIB)
 
 all : $(APP)

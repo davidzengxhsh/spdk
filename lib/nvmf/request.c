@@ -115,7 +115,7 @@ nvmf_process_discovery_cmd(struct spdk_nvmf_request *req)
 		break;
 	default:
 		SPDK_ERRLOG("Unsupported Opcode 0x%x for Discovery service\n", cmd->opc);
-		response->status.sc = SPDK_NVME_SC_INVALID_FIELD;
+		response->status.sc = SPDK_NVME_SC_INVALID_OPCODE;
 		return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 	}
 
@@ -148,10 +148,9 @@ nvmf_process_property_set(struct spdk_nvmf_request *req)
 	return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 }
 
-static void
-nvmf_handle_connect(spdk_event_t event)
+void
+spdk_nvmf_handle_connect(struct spdk_nvmf_request *req)
 {
-	struct spdk_nvmf_request *req = spdk_event_get_arg1(event);
 	struct spdk_nvmf_fabric_connect_cmd *connect = &req->cmd->connect_cmd;
 	struct spdk_nvmf_fabric_connect_data *connect_data = (struct spdk_nvmf_fabric_connect_data *)
 			req->data;
@@ -180,7 +179,6 @@ static spdk_nvmf_request_exec_status
 nvmf_process_connect(struct spdk_nvmf_request *req)
 {
 	struct spdk_nvmf_subsystem	*subsystem;
-	spdk_event_t			event;
 	struct spdk_nvmf_fabric_connect_data *data = (struct spdk_nvmf_fabric_connect_data *)
 			req->data;
 	struct spdk_nvmf_fabric_connect_cmd *cmd = &req->cmd->connect_cmd;
@@ -224,9 +222,7 @@ nvmf_process_connect(struct spdk_nvmf_request *req)
 		return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 	}
 
-	/* Pass an event to the lcore that owns this subsystem */
-	event = spdk_event_allocate(subsystem->lcore, nvmf_handle_connect, req, NULL, NULL);
-	spdk_event_call(event);
+	subsystem->connect_cb(subsystem->cb_ctx, req);
 
 	return SPDK_NVMF_REQUEST_EXEC_STATUS_ASYNCHRONOUS;
 }
@@ -343,10 +339,10 @@ spdk_nvmf_request_exec(struct spdk_nvmf_request *req)
 		if (subsystem->subtype == SPDK_NVMF_SUBTYPE_DISCOVERY) {
 			status = nvmf_process_discovery_cmd(req);
 		} else {
-			status = session->subsys->ctrlr.ops->process_admin_cmd(req);
+			status = session->subsys->ops->process_admin_cmd(req);
 		}
 	} else {
-		status = session->subsys->ctrlr.ops->process_io_cmd(req);
+		status = session->subsys->ops->process_io_cmd(req);
 	}
 
 	switch (status) {

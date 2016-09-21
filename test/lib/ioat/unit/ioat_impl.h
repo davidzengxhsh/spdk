@@ -24,7 +24,6 @@ ioat_zmalloc(const char *tag, size_t size, unsigned align, uint64_t *phys_addr)
 #define ioat_free(buf)					free(buf)
 #define ioat_vtophys(buf)				(uint64_t)(buf)
 #define ioat_delay_us(us)				ioat_noop()
-#define ioat_assert(check)				assert(check)
 #define ioat_printf(chan, fmt, args...)			printf(fmt, ##args)
 
 static inline int
@@ -49,11 +48,5 @@ ioat_pcicfg_unmap_bar(void *devhandle, uint32_t bar, void *addr)
 {
 	return 0;
 }
-
-typedef pthread_mutex_t ioat_mutex_t;
-
-#define ioat_mutex_lock pthread_mutex_lock
-#define ioat_mutex_unlock pthread_mutex_unlock
-#define IOAT_MUTEX_INITIALIZER PTHREAD_MUTEX_INITIALIZER
 
 #endif /* __IOAT_IMPL_H__ */

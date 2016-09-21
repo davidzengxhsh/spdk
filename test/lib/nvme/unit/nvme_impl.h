@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <pthread.h>
 
 #include "spdk/nvme_spec.h"
@@ -61,15 +62,6 @@ extern char outbuf[OUTBUF_SIZE];
 #define nvme_printf(ctrlr, fmt, args...) snprintf(outbuf, OUTBUF_SIZE, fmt, ##args)
 #define nvme_get_num_ioq()		8
 #define nvme_get_ioq_idx()		0
-#define nvme_assert(check, str)			\
-do							\
-	{						\
-		if (!(check)) {				\
-			printf str;			\
-			assert(check);			\
-		}					\
-	}						\
-	while (0)
 
 uint64_t nvme_vtophys(void *buf);
 #define NVME_VTOPHYS_ERROR	(0xFFFFFFFFFFFFFFFFULL)
@@ -128,29 +120,30 @@ nvme_pcicfg_get_bar_addr_len(void *devhandle, uint32_t bar, uint64_t *addr, uint
 	*size = 0;
 }
 
-typedef pthread_mutex_t nvme_mutex_t;
+static inline void *
+nvme_memzone_reserve(const char *name, size_t len, int socket_id, unsigned flags)
+{
+	return malloc(len);
+}
 
-#define nvme_mutex_init(x) pthread_mutex_init((x), NULL)
-#define nvme_mutex_destroy(x) pthread_mutex_destroy((x))
-#define nvme_mutex_lock pthread_mutex_lock
-#define nvme_mutex_unlock pthread_mutex_unlock
-#define NVME_MUTEX_INITIALIZER PTHREAD_MUTEX_INITIALIZER
+static inline void *
+nvme_memzone_lookup(const char *name)
+{
+	assert(0);
+	return NULL;
+}
 
 static inline int
-nvme_mutex_init_recursive(nvme_mutex_t *mtx)
+nvme_memzone_free(const char *name)
 {
-	pthread_mutexattr_t attr;
-	int rc = 0;
+	assert(0);
+	return 0;
+}
 
-	if (pthread_mutexattr_init(&attr)) {
-		return -1;
-	}
-	if (pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE) ||
-	    pthread_mutex_init(mtx, &attr)) {
-		rc = -1;
-	}
-	pthread_mutexattr_destroy(&attr);
-	return rc;
+static inline bool
+nvme_process_is_primary(void)
+{
+	return true;
 }
 
 #endif /* __NVME_IMPL_H__ */

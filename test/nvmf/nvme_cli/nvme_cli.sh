@@ -19,7 +19,7 @@ nvmfpid=$!
 
 trap "killprocess $nvmfpid; exit 1" SIGINT SIGTERM EXIT
 
-sleep 5
+waitforlisten $nvmfpid ${RPC_PORT}
 
 modprobe -v nvme-rdma
 
@@ -27,14 +27,22 @@ if [ -e "/dev/nvme-fabrics" ]; then
 	chmod a+rw /dev/nvme-fabrics
 fi
 
-echo 'traddr='$NVMF_FIRST_TARGET_IP',transport=rdma,nr_io_queues=1,trsvcid='$NVMF_PORT',nqn=nqn.2016-06.io.spdk:cnode1' > /dev/nvme-fabrics
+nvme connect -t rdma -n "nqn.2016-06.io.spdk:cnode1" -a "$NVMF_FIRST_TARGET_IP" -s "$NVMF_PORT"
+nvme connect -t rdma -n "nqn.2016-06.io.spdk:cnode2" -a "$NVMF_FIRST_TARGET_IP" -s "$NVMF_PORT"
 
 nvme list
-nvme id-ctrl /dev/nvme0
-nvme id-ns /dev/nvme0n1
-nvme smart-log /dev/nvme0
+
+for ctrl in /dev/nvme?; do
+	nvme id-ctrl $ctrl
+	nvme smart-log $ctrl
+done
+
+for ns in /dev/nvme?n*; do
+	nvme id-ns $ns
+done
 
 nvme disconnect -n "nqn.2016-06.io.spdk:cnode1"
+nvme disconnect -n "nqn.2016-06.io.spdk:cnode2"
 
 trap - SIGINT SIGTERM EXIT
 

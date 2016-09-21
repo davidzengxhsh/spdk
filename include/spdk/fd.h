@@ -31,16 +31,24 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NVMF_CONF_H
-#define NVMF_CONF_H
+/** \file
+ * OS filesystem utility functions
+ */
 
-struct spdk_nvmf_tgt_conf {
-	uint32_t acceptor_lcore;
-};
+#ifndef SPDK_FD_H
+#define SPDK_FD_H
 
-extern struct spdk_nvmf_tgt_conf g_spdk_nvmf_tgt_conf;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-int
-spdk_nvmf_parse_conf(void);
+#include <stdint.h>
+
+uint64_t spdk_fd_get_size(int fd);
+uint32_t spdk_fd_get_blocklen(int fd);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

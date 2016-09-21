@@ -631,7 +631,7 @@ enum spdk_nvme_data_transfer {
  */
 static inline enum spdk_nvme_data_transfer spdk_nvme_opc_get_data_transfer(uint8_t opc)
 {
-	return opc & 3;
+	return (enum spdk_nvme_data_transfer)(opc & 3);
 }
 
 enum spdk_nvme_feat {
@@ -774,7 +774,17 @@ struct __attribute__((packed)) spdk_nvme_ctrlr_data {
 	uint32_t		rtd3e;
 
 	/** optional asynchronous events supported */
-	uint32_t		oaes;
+	struct {
+		uint32_t	reserved1 : 8;
+
+		/** Supports sending Namespace Attribute Notices. */
+		uint32_t	ns_attribute_notices : 1;
+
+		/** Supports sending Firmware Activation Notices. */
+		uint32_t	fw_activation_notices : 1;
+
+		uint32_t	reserved2 : 22;
+	} oaes;
 
 	/** controller attributes */
 	struct {

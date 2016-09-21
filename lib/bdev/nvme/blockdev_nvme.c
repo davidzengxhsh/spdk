@@ -47,10 +47,13 @@
 #include <rte_malloc.h>
 
 #include "spdk/conf.h"
+#include "spdk/endian.h"
 #include "spdk/pci.h"
 #include "spdk/log.h"
 #include "spdk/bdev.h"
 #include "spdk/nvme.h"
+
+#include "bdev_module.h"
 
 #define MAX_NVME_NAME_LENGTH 64
 
@@ -269,15 +272,33 @@ static void blockdev_nvme_submit_request(struct spdk_bdev_io *bdev_io)
 	}
 }
 
-static void blockdev_nvme_free_request(struct spdk_bdev_io *bdev_io)
+static bool
+blockdev_nvme_io_type_supported(struct spdk_bdev *bdev, enum spdk_bdev_io_type io_type)
 {
+	struct nvme_blockdev *nbdev = (struct nvme_blockdev *)bdev;
+	const struct spdk_nvme_ctrlr_data *cdata;
+
+	switch (io_type) {
+	case SPDK_BDEV_IO_TYPE_READ:
+	case SPDK_BDEV_IO_TYPE_WRITE:
+	case SPDK_BDEV_IO_TYPE_RESET:
+	case SPDK_BDEV_IO_TYPE_FLUSH:
+		return true;
+
+	case SPDK_BDEV_IO_TYPE_UNMAP:
+		cdata = spdk_nvme_ctrlr_get_data(nbdev->ctrlr);
+		return cdata->oncs.dsm;
+
+	default:
+		return false;
+	}
 }
 
-static struct spdk_bdev_fn_table nvmelib_fn_table = {
-	.destruct	= blockdev_nvme_destruct,
-	.check_io	= blockdev_nvme_check_io,
-	.submit_request	= blockdev_nvme_submit_request,
-	.free_request	= blockdev_nvme_free_request,
+static const struct spdk_bdev_fn_table nvmelib_fn_table = {
+	.destruct		= blockdev_nvme_destruct,
+	.check_io		= blockdev_nvme_check_io,
+	.submit_request		= blockdev_nvme_submit_request,
+	.io_type_supported	= blockdev_nvme_io_type_supported,
 };
 
 struct nvme_probe_ctx {
@@ -532,7 +553,7 @@ nvme_ctrlr_initialize_blockdevs(struct spdk_nvme_ctrlr *ctrlr, int bdev_per_ns, 
 			snprintf(bdev->disk.name, SPDK_BDEV_MAX_NAME_LENGTH,
 				 "Nvme%dn%dp%d", ctrlr_id, spdk_nvme_ns_get_id(ns), bdev_idx);
 			snprintf(bdev->disk.product_name, SPDK_BDEV_MAX_PRODUCT_NAME_LENGTH,
-				 "iSCSI NVMe disk");
+				 "NVMe disk");
 
 			bdev->qpair = spdk_nvme_ctrlr_alloc_io_qpair(ctrlr, 0);
 			if (!bdev->qpair) {
@@ -620,8 +641,8 @@ blockdev_nvme_unmap(struct nvme_blockdev *nbdev, struct nvme_blockio *bio,
 
 	for (i = 0; i < bdesc_count; i++) {
 		bio->dsm_range[i].starting_lba =
-			nbdev->lba_start + be64toh(unmap_d->lba);
-		bio->dsm_range[i].length = be32toh(unmap_d->block_count);
+			nbdev->lba_start + from_be64(&unmap_d->lba);
+		bio->dsm_range[i].length = from_be32(&unmap_d->block_count);
 		unmap_d++;
 	}
 

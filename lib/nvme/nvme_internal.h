@@ -37,6 +37,7 @@
 #include "spdk/nvme.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -234,6 +235,14 @@ struct nvme_request {
 	 *  status once all child requests are completed.
 	 */
 	struct spdk_nvme_cpl		parent_status;
+
+	/**
+	 * The user_cb_fn and user_cb_arg fields are used for holding the original
+	 * callback data when using nvme_allocate_request_user_copy.
+	 */
+	spdk_nvme_cmd_cb		user_cb_fn;
+	void				*user_cb_arg;
+	void				*user_buffer;
 };
 
 struct nvme_completion_poll_status {
@@ -424,7 +433,7 @@ struct spdk_nvme_ctrlr {
 	void				*aer_cb_arg;
 
 	/** guards access to the controller itself, including admin queues */
-	nvme_mutex_t			ctrlr_lock;
+	pthread_mutex_t			ctrlr_lock;
 
 
 	struct spdk_nvme_qpair		adminq;
@@ -457,7 +466,7 @@ struct spdk_nvme_ctrlr {
 };
 
 struct nvme_driver {
-	nvme_mutex_t	lock;
+	pthread_mutex_t	lock;
 	TAILQ_HEAD(, spdk_nvme_ctrlr)	init_ctrlrs;
 	TAILQ_HEAD(, spdk_nvme_ctrlr)	attached_ctrlrs;
 };
@@ -469,7 +478,7 @@ struct pci_id {
 	uint16_t	sub_dev_id;
 };
 
-extern struct nvme_driver *g_nvme_driver;
+extern struct nvme_driver *g_spdk_nvme_driver;
 
 #define nvme_min(a,b) (((a)<(b))?(a):(b))
 
@@ -578,10 +587,14 @@ struct nvme_request *nvme_allocate_request(const struct nvme_payload *payload,
 struct nvme_request *nvme_allocate_request_null(spdk_nvme_cmd_cb cb_fn, void *cb_arg);
 struct nvme_request *nvme_allocate_request_contig(void *buffer, uint32_t payload_size,
 		spdk_nvme_cmd_cb cb_fn, void *cb_arg);
+struct nvme_request *nvme_allocate_request_user_copy(void *buffer, uint32_t payload_size,
+		spdk_nvme_cmd_cb cb_fn, void *cb_arg, bool host_to_controller);
 void	nvme_free_request(struct nvme_request *req);
 void	nvme_request_remove_child(struct nvme_request *parent, struct nvme_request *child);
 bool	nvme_intel_has_quirk(struct pci_id *id, uint64_t quirk);
 
 void	spdk_nvme_ctrlr_opts_set_defaults(struct spdk_nvme_ctrlr_opts *opts);
+
+int	nvme_mutex_init_shared(pthread_mutex_t *mtx);
 
 #endif /* __NVME_INTERNAL_H__ */

@@ -43,7 +43,7 @@
 
 #include "spdk/bdev.h"
 #include "spdk/conf.h"
-#include "spdk/file.h"
+#include "spdk/fd.h"
 #include "spdk/log.h"
 
 static int g_blockdev_count = 0;
@@ -273,15 +273,26 @@ static void blockdev_aio_submit_request(struct spdk_bdev_io *bdev_io)
 	}
 }
 
-static void blockdev_aio_free_request(struct spdk_bdev_io *bdev_io)
+static bool
+blockdev_aio_io_type_supported(struct spdk_bdev *bdev, enum spdk_bdev_io_type io_type)
 {
+	switch (io_type) {
+	case SPDK_BDEV_IO_TYPE_READ:
+	case SPDK_BDEV_IO_TYPE_WRITE:
+	case SPDK_BDEV_IO_TYPE_FLUSH:
+	case SPDK_BDEV_IO_TYPE_RESET:
+		return true;
+
+	default:
+		return false;
+	}
 }
 
-static struct spdk_bdev_fn_table aio_fn_table = {
-	.destruct	= blockdev_aio_destruct,
-	.check_io	= blockdev_aio_check_io,
-	.submit_request	= blockdev_aio_submit_request,
-	.free_request	= blockdev_aio_free_request,
+static const struct spdk_bdev_fn_table aio_fn_table = {
+	.destruct		= blockdev_aio_destruct,
+	.check_io		= blockdev_aio_check_io,
+	.submit_request		= blockdev_aio_submit_request,
+	.io_type_supported	= blockdev_aio_io_type_supported,
 };
 
 static void aio_free_disk(struct file_disk *fdisk)
@@ -310,17 +321,17 @@ create_aio_disk(char *fname)
 		goto error_return;
 	}
 
-	fdisk->size = spdk_file_get_size(fdisk->fd);
+	fdisk->size = spdk_fd_get_size(fdisk->fd);
 	fdisk->queue_depth = 128; // TODO: where do we get the queue depth from.
 
 	TAILQ_INIT(&fdisk->sync_completion_list);
 	snprintf(fdisk->disk.name, SPDK_BDEV_MAX_NAME_LENGTH, "AIO%d",
 		 g_blockdev_count);
-	snprintf(fdisk->disk.product_name, SPDK_BDEV_MAX_PRODUCT_NAME_LENGTH, "iSCSI AIO disk");
+	snprintf(fdisk->disk.product_name, SPDK_BDEV_MAX_PRODUCT_NAME_LENGTH, "AIO disk");
 
 	fdisk->disk.need_aligned_buffer = 1;
 	fdisk->disk.write_cache = 1;
-	fdisk->disk.blocklen = spdk_dev_get_blocklen(fdisk->fd);
+	fdisk->disk.blocklen = spdk_fd_get_blocklen(fdisk->fd);
 	fdisk->disk.blockcnt = fdisk->size / fdisk->disk.blocklen;
 	fdisk->disk.ctxt = fdisk;
 

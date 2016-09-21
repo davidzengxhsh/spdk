@@ -49,6 +49,8 @@
 #include "spdk/log.h"
 #include "spdk/queue.h"
 
+#include "bdev_module.h"
+
 #define SPDK_BDEV_IO_POOL_SIZE	(64 * 1024)
 #define RBUF_SMALL_POOL_SIZE	8192
 #define RBUF_LARGE_POOL_SIZE	1024
@@ -403,13 +405,6 @@ spdk_bdev_cleanup_pending_rbuf_io(struct spdk_bdev *bdev)
 }
 
 static void
-spdk_bdev_io_free_request(struct spdk_bdev_io *bdev_io)
-{
-	bdev_io->bdev->fn_table->free_request(bdev_io);
-	spdk_bdev_put_io(bdev_io);
-}
-
-static void
 __submit_request(spdk_event_t event)
 {
 	struct spdk_bdev *bdev = spdk_event_get_arg1(event);
@@ -423,7 +418,25 @@ __submit_request(spdk_event_t event)
 		}
 		bdev->fn_table->submit_request(bdev_io);
 	} else {
-		spdk_bdev_io_free_request(bdev_io);
+		struct spdk_bdev_io *child_io, *tmp;
+
+		TAILQ_FOREACH_SAFE(child_io, &bdev_io->child_io, link, tmp) {
+			/*
+			 * Make sure no references to the parent I/O remain, since it is being
+			 * returned to the free pool.
+			 */
+			child_io->parent = NULL;
+			TAILQ_REMOVE(&bdev_io->child_io, child_io, link);
+
+			/*
+			 * Child I/O may have an rbuf that needs to be returned to a pool
+			 *  on a different core, so free it through the request submission
+			 *  process rather than calling put_io directly here.
+			 */
+			spdk_bdev_free_io(child_io);
+		}
+
+		spdk_bdev_put_io(bdev_io);
 	}
 }
 
@@ -449,7 +462,9 @@ spdk_bdev_io_submit(struct spdk_bdev_io *bdev_io)
 			lcore = rte_lcore_id();
 		}
 		bdev->lcore = lcore;
-		spdk_poller_register(&bdev->poller, spdk_bdev_do_work, bdev, lcore, NULL, 0);
+		if (bdev->fn_table->check_io) {
+			spdk_poller_register(&bdev->poller, spdk_bdev_do_work, bdev, lcore, NULL, 0);
+		}
 	}
 
 	if (bdev_io->status == SPDK_BDEV_IO_STATUS_PENDING) {
@@ -477,7 +492,6 @@ spdk_bdev_io_init(struct spdk_bdev_io *bdev_io,
 	bdev_io->cb = cb;
 	bdev_io->gencnt = bdev->gencnt;
 	bdev_io->status = SPDK_BDEV_IO_STATUS_PENDING;
-	bdev_io->children = 0;
 	TAILQ_INIT(&bdev_io->child_io);
 }
 
@@ -510,14 +524,19 @@ spdk_bdev_get_child_io(struct spdk_bdev_io *parent,
 	child->parent = parent;
 
 	TAILQ_INSERT_TAIL(&parent->child_io, child, link);
-	parent->children++;
 
 	return child;
 }
 
+bool
+spdk_bdev_io_type_supported(struct spdk_bdev *bdev, enum spdk_bdev_io_type io_type)
+{
+	return bdev->fn_table->io_type_supported(bdev, io_type);
+}
+
 struct spdk_bdev_io *
 spdk_bdev_read(struct spdk_bdev *bdev,
-	       void *buf, uint64_t nbytes, uint64_t offset,
+	       void *buf, uint64_t offset, uint64_t nbytes,
 	       spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct spdk_bdev_io *bdev_io;
@@ -562,7 +581,7 @@ spdk_bdev_read(struct spdk_bdev *bdev,
 
 struct spdk_bdev_io *
 spdk_bdev_write(struct spdk_bdev *bdev,
-		void *buf, uint64_t nbytes, uint64_t offset,
+		void *buf, uint64_t offset, uint64_t nbytes,
 		spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct spdk_bdev_io *bdev_io;
@@ -586,7 +605,7 @@ spdk_bdev_write(struct spdk_bdev *bdev,
 
 	bdev_io = spdk_bdev_get_io();
 	if (!bdev_io) {
-		SPDK_ERRLOG("blockdev_io memory allocation failed duing writev\n");
+		SPDK_ERRLOG("blockdev_io memory allocation failed duing write\n");
 		return NULL;
 	}
 
@@ -611,7 +630,7 @@ spdk_bdev_write(struct spdk_bdev *bdev,
 struct spdk_bdev_io *
 spdk_bdev_writev(struct spdk_bdev *bdev,
 		 struct iovec *iov, int iovcnt,
-		 uint64_t len, uint64_t offset,
+		 uint64_t offset, uint64_t len,
 		 spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct spdk_bdev_io *bdev_io;
@@ -713,7 +732,7 @@ spdk_bdev_flush(struct spdk_bdev *bdev,
 }
 
 int
-spdk_bdev_reset(struct spdk_bdev *bdev, int reset_type,
+spdk_bdev_reset(struct spdk_bdev *bdev, enum spdk_bdev_reset_type reset_type,
 		spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct spdk_bdev_io *bdev_io;
@@ -798,6 +817,7 @@ spdk_bdev_register(struct spdk_bdev *bdev)
 	/* initialize the reset generation value to zero */
 	bdev->gencnt = 0;
 	bdev->is_running = false;
+	bdev->poller = NULL;
 
 	SPDK_TRACELOG(SPDK_TRACE_DEBUG, "Inserting bdev %s into list\n", bdev->name);
 	TAILQ_INSERT_TAIL(&spdk_bdev_list, bdev, link);
@@ -817,7 +837,9 @@ spdk_bdev_unregister(struct spdk_bdev *bdev)
 	}
 
 	if (bdev->is_running) {
-		spdk_poller_unregister(&bdev->poller, NULL);
+		if (bdev->poller) {
+			spdk_poller_unregister(&bdev->poller, NULL);
+		}
 		bdev->is_running = false;
 	}
 }

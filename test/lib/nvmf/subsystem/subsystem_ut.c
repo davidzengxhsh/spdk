@@ -47,9 +47,27 @@ SPDK_LOG_REGISTER_TRACE_FLAG("nvmf", SPDK_TRACE_NVMF)
 
 struct spdk_nvmf_globals g_nvmf_tgt;
 
+uint32_t
+spdk_app_get_current_core(void)
+{
+	return 0;
+}
+
+struct spdk_event *spdk_event_allocate(uint32_t lcore, spdk_event_fn fn,
+				       void *arg1, void *arg2,
+				       spdk_event_t next)
+{
+	return NULL;
+}
+
 void
 spdk_poller_register(struct spdk_poller **ppoller, spdk_poller_fn fn, void *arg, uint32_t lcore,
 		     struct spdk_event *complete, uint64_t period_microseconds)
+{
+}
+
+void spdk_poller_unregister(struct spdk_poller **ppoller,
+			    struct spdk_event *complete)
 {
 }
 
@@ -89,8 +107,44 @@ spdk_nvmf_session_poll(struct nvmf_session *session)
 }
 
 static void
-test_foobar(void)
+nvmf_test_create_subsystem(void)
 {
+	char nqn[256];
+	struct spdk_nvmf_subsystem *subsystem;
+
+	strncpy(nqn, "nqn.2016-06.io.spdk:subsystem1", sizeof(nqn));
+	subsystem = spdk_nvmf_create_subsystem(1, nqn, SPDK_NVMF_SUBTYPE_NVME, NULL, NULL, NULL);
+	SPDK_CU_ASSERT_FATAL(subsystem != NULL);
+	CU_ASSERT_EQUAL(subsystem->num, 1);
+	CU_ASSERT_STRING_EQUAL(subsystem->subnqn, nqn);
+	spdk_nvmf_delete_subsystem(subsystem);
+
+	/* Longest valid name */
+	strncpy(nqn, "nqn.2016-06.io.spdk:", sizeof(nqn));
+	memset(nqn + strlen(nqn), 'a', 222 - strlen(nqn));
+	nqn[222] = '\0';
+	CU_ASSERT(strlen(nqn) == 222);
+	subsystem = spdk_nvmf_create_subsystem(2, nqn, SPDK_NVMF_SUBTYPE_NVME, NULL, NULL, NULL);
+	SPDK_CU_ASSERT_FATAL(subsystem != NULL);
+	CU_ASSERT_STRING_EQUAL(subsystem->subnqn, nqn);
+	spdk_nvmf_delete_subsystem(subsystem);
+
+	/* Name that is one byte longer than allowed */
+	strncpy(nqn, "nqn.2016-06.io.spdk:", sizeof(nqn));
+	memset(nqn + strlen(nqn), 'a', 223 - strlen(nqn));
+	nqn[223] = '\0';
+	CU_ASSERT(strlen(nqn) == 223);
+	subsystem = spdk_nvmf_create_subsystem(2, nqn, SPDK_NVMF_SUBTYPE_NVME, NULL, NULL, NULL);
+	CU_ASSERT(subsystem == NULL);
+}
+
+static void
+nvmf_test_find_subsystem(void)
+{
+	CU_ASSERT_PTR_NULL(nvmf_find_subsystem(NULL, NULL));
+	CU_ASSERT_PTR_NULL(nvmf_find_subsystem("fake", NULL));
+	CU_ASSERT_PTR_NULL(nvmf_find_subsystem(NULL, "fake"));
+	CU_ASSERT_PTR_NULL(nvmf_find_subsystem("fake", "fake"));
 }
 
 int main(int argc, char **argv)
@@ -109,7 +163,8 @@ int main(int argc, char **argv)
 	}
 
 	if (
-		CU_add_test(suite, "foobar", test_foobar) == NULL) {
+		CU_add_test(suite, "create_subsystem", nvmf_test_create_subsystem) == NULL ||
+		CU_add_test(suite, "find_subsystem", nvmf_test_find_subsystem) == NULL) {
 		CU_cleanup_registry();
 		return CU_get_error();
 	}

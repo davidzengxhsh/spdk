@@ -58,6 +58,8 @@ nvmf_init_discovery_session_properties(struct nvmf_session *session)
 	session->vcdata.sgls.keyed_sgl = 1;
 	session->vcdata.sgls.sgl_offset = 1;
 
+	strncpy((char *)session->vcdata.subnqn, SPDK_NVMF_DISCOVERY_NQN, sizeof(session->vcdata.subnqn));
+
 	/* Properties */
 	session->vcprop.cap.raw = 0;
 	session->vcprop.cap.bits.cqr = 1;	/* NVMF specification required */
@@ -86,7 +88,7 @@ nvmf_init_nvme_session_properties(struct nvmf_session *session)
 	assert((g_nvmf_tgt.max_io_size % 4096) == 0);
 
 	/* Init the controller details */
-	session->subsys->ctrlr.ops->ctrlr_get_data(session);
+	session->subsys->ops->ctrlr_get_data(session);
 
 	session->vcdata.aerl = 0;
 	session->vcdata.cntlid = 0;
@@ -104,6 +106,8 @@ nvmf_init_nvme_session_properties(struct nvmf_session *session)
 
 	/* TODO: this should be set by the transport */
 	session->vcdata.nvmf_specific.ioccsz += g_nvmf_tgt.in_capsule_data_size / 16;
+
+	strncpy((char *)session->vcdata.subnqn, session->subsys->subnqn, sizeof(session->vcdata.subnqn));
 
 	SPDK_TRACELOG(SPDK_TRACE_NVMF, "	ctrlr data: maxcmd %x\n",
 		      session->vcdata.maxcmd);
@@ -152,11 +156,16 @@ nvmf_init_nvme_session_properties(struct nvmf_session *session)
 		      session->vcprop.csts.raw);
 }
 
+static void session_destruct(struct nvmf_session *session)
+{
+	session->subsys->session = NULL;
+	session->transport->session_fini(session);
+	free(session);
+}
+
 void
 spdk_nvmf_session_destruct(struct nvmf_session *session)
 {
-	session->subsys->session = NULL;
-
 	while (!TAILQ_EMPTY(&session->connections)) {
 		struct spdk_nvmf_conn *conn = TAILQ_FIRST(&session->connections);
 
@@ -165,9 +174,7 @@ spdk_nvmf_session_destruct(struct nvmf_session *session)
 		conn->transport->conn_fini(conn);
 	}
 
-	session->transport->session_fini(session);
-
-	free(session);
+	session_destruct(session);
 }
 
 static void
@@ -214,6 +221,16 @@ spdk_nvmf_session_connect(struct spdk_nvmf_conn *conn,
 		return;
 	}
 
+	/*
+	 * SQSIZE is a 0-based value, so it must be at least 1 (minimum queue depth is 2) and
+	 *  strictly less than max_queue_depth.
+	 */
+	if (cmd->sqsize == 0 || cmd->sqsize >= g_nvmf_tgt.max_queue_depth) {
+		SPDK_ERRLOG("Invalid SQSIZE %u (min 1, max %u)\n",
+			    cmd->sqsize, g_nvmf_tgt.max_queue_depth - 1);
+		INVALID_CONNECT_CMD(sqsize);
+		return;
+	}
 	conn->sq_head_max = cmd->sqsize;
 
 	if (cmd->qid == 0) {
@@ -244,11 +261,15 @@ spdk_nvmf_session_connect(struct spdk_nvmf_conn *conn,
 		}
 
 		TAILQ_INIT(&session->connections);
+		session->kato = cmd->kato;
 		session->num_connections = 0;
 		session->subsys = subsystem;
 		session->max_connections_allowed = g_nvmf_tgt.max_queues_per_session;
 		if (conn->transport->session_init(session, conn)) {
 			rsp->status.sc = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
+			conn->transport->session_fini(session);
+			free(session);
+			subsystem->session = NULL;
 			return;
 		}
 
@@ -309,15 +330,17 @@ spdk_nvmf_session_connect(struct spdk_nvmf_conn *conn,
 }
 
 void
-nvmf_disconnect(struct nvmf_session *session,
-		struct spdk_nvmf_conn *conn)
+spdk_nvmf_session_disconnect(struct spdk_nvmf_conn *conn)
 {
+	struct nvmf_session *session = conn->sess;
+
+	assert(session != NULL);
 	session->num_connections--;
 	TAILQ_REMOVE(&session->connections, conn, link);
 	conn->transport->conn_fini(conn);
 
 	if (session->num_connections == 0) {
-		spdk_nvmf_session_destruct(session);
+		session_destruct(session);
 	}
 }
 
@@ -537,7 +560,7 @@ spdk_nvmf_session_poll(struct nvmf_session *session)
 	TAILQ_FOREACH_SAFE(conn, &session->connections, link, tmp) {
 		if (conn->transport->conn_poll(conn) < 0) {
 			SPDK_ERRLOG("Transport poll failed for conn %p; closing connection\n", conn);
-			nvmf_disconnect(session, conn);
+			spdk_nvmf_session_disconnect(conn);
 		}
 	}
 

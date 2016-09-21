@@ -100,7 +100,7 @@ static int spdk_nvmf_check_pool(struct rte_mempool *pool, uint32_t count)
 	}
 }
 
-static int
+int
 spdk_nvmf_check_pools(void)
 {
 	int rc = 0;
@@ -130,11 +130,6 @@ nvmf_tgt_init(uint16_t max_queue_depth, uint16_t max_queues_per_sess,
 	SPDK_TRACELOG(SPDK_TRACE_NVMF, "Max In Capsule Data: %d bytes\n", in_capsule_data_size);
 	SPDK_TRACELOG(SPDK_TRACE_NVMF, "Max I/O Size: %d bytes\n", max_io_size);
 
-	/* init nvmf specific config options */
-	if (!g_nvmf_tgt.sin_port) {
-		g_nvmf_tgt.sin_port = htons(SPDK_NVMF_DEFAULT_SIN_PORT);
-	}
-
 	rc = spdk_nvmf_initialize_pools();
 	if (rc != 0) {
 		SPDK_ERRLOG("spdk_nvmf_initialize_pools() failed\n");
@@ -143,28 +138,6 @@ nvmf_tgt_init(uint16_t max_queue_depth, uint16_t max_queues_per_sess,
 
 	return 0;
 }
-
-static int
-nvmf_tgt_subsystem_initialize(void)
-{
-	return 0;
-}
-
-static int
-nvmf_tgt_subsystem_fini(void)
-{
-	spdk_shutdown_nvmf_subsystems();
-	spdk_nvmf_transport_fini();
-
-	if (spdk_nvmf_check_pools() != 0) {
-		return -1;
-	}
-
-	return 0;
-}
-
-SPDK_SUBSYSTEM_REGISTER(nvmf, nvmf_tgt_subsystem_initialize, nvmf_tgt_subsystem_fini, NULL)
-SPDK_SUBSYSTEM_DEPEND(nvmf, bdev)
 
 SPDK_TRACE_REGISTER_FN(nvmf_trace)
 {

@@ -36,7 +36,6 @@
 
 #include "nvmf_internal.h"
 
-#include "spdk/event.h"
 #include "spdk/nvme.h"
 #include "spdk/queue.h"
 #include "spdk/bdev.h"
@@ -46,8 +45,8 @@ struct spdk_nvmf_subsystem;
 struct spdk_nvmf_request;
 struct nvmf_session;
 
-#define MAX_NQN_SIZE 255
 #define MAX_VIRTUAL_NAMESPACE 16
+#define MAX_SN_LEN 20
 
 enum spdk_nvmf_subsystem_mode {
 	NVMF_SUBSYSTEM_MODE_DIRECT	= 0,
@@ -56,7 +55,7 @@ enum spdk_nvmf_subsystem_mode {
 
 struct spdk_nvmf_listen_addr {
 	char					*traddr;
-	char					*trsvc; /* TODO: Change to trsvcid */
+	char					*trsvcid;
 	const struct spdk_nvmf_transport	*transport;
 	TAILQ_ENTRY(spdk_nvmf_listen_addr)	link;
 };
@@ -64,11 +63,6 @@ struct spdk_nvmf_listen_addr {
 struct spdk_nvmf_host {
 	char				*nqn;
 	TAILQ_ENTRY(spdk_nvmf_host)	link;
-};
-
-struct spdk_nvmf_ns {
-	uint32_t nsid;
-	struct spdk_bdev *bdev;
 };
 
 struct spdk_nvmf_ctrlr_ops {
@@ -91,26 +85,15 @@ struct spdk_nvmf_ctrlr_ops {
 	 * Poll for completions.
 	 */
 	void (*poll_for_completions)(struct nvmf_session *session);
+
+	/**
+	 * Detach the controller.
+	 */
+	void (*detach)(struct spdk_nvmf_subsystem *subsystem);
 };
 
-struct spdk_nvmf_controller {
-	union {
-		struct {
-			struct nvmf_session *session;
-			struct spdk_nvme_ctrlr *ctrlr;
-			struct spdk_nvme_qpair *io_qpair;
-		} direct;
-
-		struct {
-			struct nvmf_session *session;
-			struct spdk_nvmf_ns *ns_list[MAX_VIRTUAL_NAMESPACE];
-			uint16_t ns_count;
-		} virtual;
-	} dev;
-
-	const struct spdk_nvmf_ctrlr_ops *ops;
-};
-
+typedef void (*spdk_nvmf_subsystem_connect_fn)(void *cb_ctx, struct spdk_nvmf_request *req);
+typedef void (*spdk_nvmf_subsystem_disconnect_fn)(void *cb_ctx, struct spdk_nvmf_conn *conn);
 
 /*
  * The NVMf subsystem, as indicated in the specification, is a collection
@@ -120,13 +103,29 @@ struct spdk_nvmf_controller {
 struct spdk_nvmf_subsystem {
 	uint16_t num;
 	uint32_t lcore;
-	char subnqn[MAX_NQN_SIZE];
+	char subnqn[SPDK_NVMF_NQN_MAX_LEN];
 	enum spdk_nvmf_subsystem_mode mode;
 	enum spdk_nvmf_subtype subtype;
 	struct nvmf_session *session;
-	struct spdk_nvmf_controller 	ctrlr;
 
-	struct spdk_poller			*poller;
+	union {
+		struct {
+			struct spdk_nvme_ctrlr *ctrlr;
+			struct spdk_nvme_qpair *io_qpair;
+		} direct;
+
+		struct {
+			char	sn[MAX_SN_LEN + 1];
+			struct spdk_bdev *ns_list[MAX_VIRTUAL_NAMESPACE];
+			uint16_t ns_count;
+		} virtual;
+	} dev;
+
+	const struct spdk_nvmf_ctrlr_ops *ops;
+
+	void					*cb_ctx;
+	spdk_nvmf_subsystem_connect_fn		connect_cb;
+	spdk_nvmf_subsystem_disconnect_fn	disconnect_cb;
 
 	TAILQ_HEAD(, spdk_nvmf_listen_addr)	listen_addrs;
 	uint32_t				num_listen_addrs;
@@ -137,13 +136,14 @@ struct spdk_nvmf_subsystem {
 	TAILQ_ENTRY(spdk_nvmf_subsystem) entries;
 };
 
-struct spdk_nvmf_subsystem *
-nvmf_create_subsystem(int num, const char *name,
-		      enum spdk_nvmf_subtype subtype,
-		      uint32_t lcore);
+struct spdk_nvmf_subsystem *spdk_nvmf_create_subsystem(int num,
+		const char *name,
+		enum spdk_nvmf_subtype subtype,
+		void *cb_ctx,
+		spdk_nvmf_subsystem_connect_fn connect_cb,
+		spdk_nvmf_subsystem_disconnect_fn disconnect_cb);
 
-int
-nvmf_delete_subsystem(struct spdk_nvmf_subsystem *subsystem);
+void spdk_nvmf_delete_subsystem(struct spdk_nvmf_subsystem *subsystem);
 
 struct spdk_nvmf_subsystem *
 nvmf_find_subsystem(const char *subnqn, const char *hostnqn);
@@ -151,7 +151,7 @@ nvmf_find_subsystem(const char *subnqn, const char *hostnqn);
 int
 spdk_nvmf_subsystem_add_listener(struct spdk_nvmf_subsystem *subsystem,
 				 const struct spdk_nvmf_transport *transport,
-				 char *traddr, char *trsvc);
+				 char *traddr, char *trsvcid);
 
 int
 spdk_nvmf_subsystem_add_host(struct spdk_nvmf_subsystem *subsystem,
@@ -161,13 +161,13 @@ int
 nvmf_subsystem_add_ctrlr(struct spdk_nvmf_subsystem *subsystem,
 			 struct spdk_nvme_ctrlr *ctrlr);
 
-int
-spdk_shutdown_nvmf_subsystems(void);
-
 void
 spdk_format_discovery_log(struct spdk_nvmf_discovery_log_page *disc_log, uint32_t length);
 
 void spdk_nvmf_subsystem_poll(struct spdk_nvmf_subsystem *subsystem);
 
+int
+spdk_nvmf_subsystem_add_ns(struct spdk_nvmf_subsystem *subsystem, struct spdk_bdev *bdev);
 extern const struct spdk_nvmf_ctrlr_ops spdk_nvmf_direct_ctrlr_ops;
+extern const struct spdk_nvmf_ctrlr_ops spdk_nvmf_virtual_ctrlr_ops;
 #endif /* SPDK_NVMF_SUBSYSTEM_H */

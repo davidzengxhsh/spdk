@@ -31,24 +31,36 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/** \file
- * OS filesystem utility functions
- */
-
-#ifndef SPDK_FILE_H
-#define SPDK_FILE_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#ifndef NVMF_TGT_H
+#define NVMF_TGT_H
 
 #include <stdint.h>
 
-uint64_t spdk_file_get_size(int fd);
-uint32_t spdk_dev_get_blocklen(int fd);
+#include "spdk/nvmf_spec.h"
+#include "spdk/queue.h"
 
-#ifdef __cplusplus
-}
-#endif
+struct spdk_nvmf_tgt_conf {
+	uint32_t acceptor_lcore;
+};
+
+struct nvmf_tgt_subsystem {
+	struct spdk_nvmf_subsystem *subsystem;
+	struct spdk_poller *poller;
+
+	TAILQ_ENTRY(nvmf_tgt_subsystem) tailq;
+
+	uint32_t lcore;
+};
+
+extern struct spdk_nvmf_tgt_conf g_spdk_nvmf_tgt_conf;
+
+int spdk_nvmf_parse_conf(void);
+
+struct nvmf_tgt_subsystem *nvmf_tgt_create_subsystem(int num,
+		const char *name,
+		enum spdk_nvmf_subtype subtype,
+		uint32_t lcore);
+
+void nvmf_tgt_delete_subsystem(struct nvmf_tgt_subsystem *app_subsys);
 
 #endif
